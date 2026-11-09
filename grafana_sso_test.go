@@ -1,6 +1,7 @@
 package mcpgrafana
 
 import (
+	"bytes"
 	"context"
 	"io"
 	"log/slog"
@@ -8,8 +9,6 @@ import (
 	"net/http/cookiejar"
 	"net/http/httptest"
 	"net/url"
-	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -79,24 +78,21 @@ func TestLoginGrafanaSSOUsesInjectedLoginAndCookieJar(t *testing.T) {
 	}
 }
 
-func TestLoginGrafanaSSOWritesCredentialFreeLog(t *testing.T) {
+func TestLoginGrafanaSSOUsesCredentialFreeLogger(t *testing.T) {
 	setSSOTestEnv(t)
 	cfg, _, err := GrafanaSSOConfigFromEnv()
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfg.LogFile = filepath.Join(t.TempDir(), "sso", "login.log")
-	_, err = LoginGrafanaSSO(context.Background(), cfg, slog.New(slog.NewTextHandler(io.Discard, nil)), func(context.Context, GrafanaSSOConfig, *slog.Logger) ([]*http.Cookie, error) {
+	var logOutput bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logOutput, nil))
+	_, err = LoginGrafanaSSO(context.Background(), cfg, logger, func(context.Context, GrafanaSSOConfig, *slog.Logger) ([]*http.Cookie, error) {
 		return []*http.Cookie{{Name: "grafana_session", Value: "test-session", Path: "/"}}, nil
 	})
 	if err != nil {
 		t.Fatalf("LoginGrafanaSSO() error = %v", err)
 	}
-	contents, err := os.ReadFile(cfg.LogFile)
-	if err != nil {
-		t.Fatalf("read SSO log: %v", err)
-	}
-	logText := string(contents)
+	logText := logOutput.String()
 	if !strings.Contains(logText, "Grafana SSO session cookies captured") {
 		t.Fatalf("SSO log missing completion event: %s", logText)
 	}

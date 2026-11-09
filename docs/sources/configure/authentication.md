@@ -36,8 +36,8 @@ The first Grafana API request triggers a GET to Grafana's `/login/azuread` route
 - `GRAFANA_SSO_HOSTS`: comma-separated exact HTTPS identity-provider hosts allowed to receive credentials; defaults to `login.microsoftonline.com`.
 - `GRAFANA_SSO_TIMEOUT`: login timeout; defaults to `120s`.
 - `GRAFANA_SSO_CHROME_BIN` or `CHROME_BIN`: Chromium executable path.
-- `GRAFANA_SSO_LOG_FILE`: append structured SSO stage logs to this file (mode `0600`). Logs omit credentials and OAuth query parameters.
-- `GRAFANA_SSO_SCREENSHOT_DIR`: save redacted PNGs at major login stages. The directory is created with mode `0700`; each image is written with mode `0600`.
+
+SSO stage logs are emitted through the server's configured logger. The server does not save SSO log or screenshot files.
 
 The headless login cannot complete MFA or other interactive identity-provider challenges. It fails instead of attempting to bypass them. In containers Rod runs Chromium with its container-specific no-sandbox option; the MCP image runs as a non-root user.
 

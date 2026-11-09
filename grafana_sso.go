@@ -4,14 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"net"
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
-	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -23,27 +20,23 @@ import (
 )
 
 const (
-	grafanaSSOStepWait            = 4 * time.Second
-	grafanaAuthModeEnvVar         = "GRAFANA_AUTH_MODE"
-	grafanaSSOLoginPathEnvVar     = "GRAFANA_LOGIN_PATH"
-	grafanaSSOHostsEnvVar         = "GRAFANA_SSO_HOSTS"
-	grafanaSSOTimeoutEnvVar       = "GRAFANA_SSO_TIMEOUT"
-	grafanaSSOChromeBinEnvVar     = "GRAFANA_SSO_CHROME_BIN"
-	grafanaSSOLogFileEnvVar       = "GRAFANA_SSO_LOG_FILE"
-	grafanaSSOScreenshotDirEnvVar = "GRAFANA_SSO_SCREENSHOT_DIR"
-	grafanaSSODefaultLoginPath    = "/login/azuread"
+	grafanaSSOStepWait         = 4 * time.Second
+	grafanaAuthModeEnvVar      = "GRAFANA_AUTH_MODE"
+	grafanaSSOLoginPathEnvVar  = "GRAFANA_LOGIN_PATH"
+	grafanaSSOHostsEnvVar      = "GRAFANA_SSO_HOSTS"
+	grafanaSSOTimeoutEnvVar    = "GRAFANA_SSO_TIMEOUT"
+	grafanaSSOChromeBinEnvVar  = "GRAFANA_SSO_CHROME_BIN"
+	grafanaSSODefaultLoginPath = "/login/azuread"
 )
 
 type GrafanaSSOConfig struct {
-	GrafanaURL    string
-	LoginPath     string
-	Username      string
-	Password      string
-	TrustedHosts  []string
-	ChromeBinary  string
-	LoginTimeout  time.Duration
-	LogFile       string
-	ScreenshotDir string
+	GrafanaURL   string
+	LoginPath    string
+	Username     string
+	Password     string
+	TrustedHosts []string
+	ChromeBinary string
+	LoginTimeout time.Duration
 }
 
 type GrafanaSSOLoginFunc func(context.Context, GrafanaSSOConfig, *slog.Logger) ([]*http.Cookie, error)
@@ -71,14 +64,12 @@ func GrafanaSSOConfigFromEnv() (GrafanaSSOConfig, bool, error) {
 	}
 
 	cfg := GrafanaSSOConfig{
-		GrafanaURL:    normalizeGrafanaURL(getEnv(grafanaURLEnvVar)),
-		LoginPath:     getEnv(grafanaSSOLoginPathEnvVar),
-		Username:      username,
-		Password:      password,
-		ChromeBinary:  firstNonEmpty(getEnv(grafanaSSOChromeBinEnvVar), getEnv("CHROME_BIN")),
-		LoginTimeout:  120 * time.Second,
-		LogFile:       getEnv(grafanaSSOLogFileEnvVar),
-		ScreenshotDir: getEnv(grafanaSSOScreenshotDirEnvVar),
+		GrafanaURL:   normalizeGrafanaURL(getEnv(grafanaURLEnvVar)),
+		LoginPath:    getEnv(grafanaSSOLoginPathEnvVar),
+		Username:     username,
+		Password:     password,
+		ChromeBinary: firstNonEmpty(getEnv(grafanaSSOChromeBinEnvVar), getEnv("CHROME_BIN")),
+		LoginTimeout: 120 * time.Second,
 	}
 	if cfg.GrafanaURL == "" {
 		cfg.GrafanaURL = defaultGrafanaURL
@@ -186,11 +177,6 @@ func LoginGrafanaSSO(ctx context.Context, cfg GrafanaSSOConfig, logger *slog.Log
 	if logger == nil {
 		logger = slog.Default()
 	}
-	logger, closeLog, err := grafanaSSOLogger(cfg.LogFile, logger)
-	if err != nil {
-		return nil, err
-	}
-	defer closeLog()
 	logger.Info("Preparing Grafana SSO", "grafana_url", redactedPageLocation(cfg.GrafanaURL), "login_path", cfg.LoginPath)
 	if login == nil {
 		login = rodGrafanaSSOLogin
@@ -333,88 +319,6 @@ func grafanaSSOSessionExpired(response *http.Response, req *http.Request) bool {
 		(location.Path == "/login" || strings.HasPrefix(location.Path, "/login/"))
 }
 
-func grafanaSSOLogger(path string, fallback *slog.Logger) (*slog.Logger, func(), error) {
-	if path == "" {
-		return fallback, func() {}, nil
-	}
-	if dir := filepath.Dir(path); dir != "." {
-		if err := os.MkdirAll(dir, 0o700); err != nil {
-			return nil, nil, fmt.Errorf("create SSO log directory: %w", err)
-		}
-	}
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
-	if err != nil {
-		return nil, nil, fmt.Errorf("open SSO log file: %w", err)
-	}
-	logger := slog.New(slog.NewJSONHandler(io.MultiWriter(os.Stderr, file), &slog.HandlerOptions{Level: slog.LevelInfo}))
-	return logger, func() { _ = file.Close() }, nil
-}
-
-func captureSSOScreenshot(page *rod.Page, cfg GrafanaSSOConfig, logger *slog.Logger, stage string) {
-	if cfg.ScreenshotDir == "" {
-		return
-	}
-	if err := os.MkdirAll(cfg.ScreenshotDir, 0o700); err != nil {
-		logger.Warn("Could not create SSO screenshot directory", "error", err)
-		return
-	}
-	_, err := page.Eval(`(username) => {
-		const root = document.body || document.documentElement;
-		if (!root) return;
-		const style = document.createElement("style");
-		style.id = "grafana-sso-screenshot-redaction";
-		style.textContent = "input:not([type=button]):not([type=submit]),textarea { color: transparent !important; -webkit-text-fill-color: transparent !important; text-shadow: none !important; caret-color: transparent !important; }";
-		root.appendChild(style);
-		const saved = [];
-		if (username) {
-			const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
-			while (walker.nextNode()) {
-				const node = walker.currentNode;
-				if (node.nodeValue && node.nodeValue.includes(username)) {
-					saved.push([node, node.nodeValue]);
-					node.nodeValue = node.nodeValue.split(username).join("[redacted]");
-				}
-			}
-		}
-		window.__grafanaSSOScreenshotSavedText = saved;
-	}`, cfg.Username)
-	if err != nil {
-		logger.Warn("Could not redact SSO screenshot", "stage", stage, "error", err)
-		return
-	}
-	defer func() {
-		_, _ = page.Eval(`() => {
-			const style = document.getElementById("grafana-sso-screenshot-redaction");
-			if (style) style.remove();
-			for (const [node, value] of (window.__grafanaSSOScreenshotSavedText || [])) node.nodeValue = value;
-			delete window.__grafanaSSOScreenshotSavedText;
-		}`)
-	}()
-	image, err := page.Screenshot(false, nil)
-	if err != nil {
-		logger.Warn("Could not capture SSO screenshot", "stage", stage, "error", err)
-		return
-	}
-	name := time.Now().UTC().Format("20060102T150405.000000000Z") + "-" + stage + ".png"
-	path := filepath.Join(cfg.ScreenshotDir, name)
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
-	if err != nil {
-		logger.Warn("Could not save SSO screenshot", "stage", stage, "error", err)
-		return
-	}
-	_, writeErr := file.Write(image)
-	closeErr := file.Close()
-	if writeErr != nil {
-		logger.Warn("Could not save SSO screenshot", "stage", stage, "error", writeErr)
-		return
-	}
-	if closeErr != nil {
-		logger.Warn("Could not close SSO screenshot", "stage", stage, "error", closeErr)
-		return
-	}
-	logger.Info("Saved redacted SSO screenshot", "stage", stage, "path", path)
-}
-
 func rodGrafanaSSOLogin(ctx context.Context, cfg GrafanaSSOConfig, logger *slog.Logger) ([]*http.Cookie, error) {
 	baseURL, _ := url.Parse(cfg.GrafanaURL)
 	loginURL := strings.TrimRight(cfg.GrafanaURL, "/") + "/" + strings.TrimLeft(cfg.LoginPath, "/")
@@ -471,7 +375,6 @@ func rodGrafanaSSOLogin(ctx context.Context, cfg GrafanaSSOConfig, logger *slog.
 	if err := waitGrafanaSSOStep(loginCtx, logger, "grafana_route"); err != nil {
 		return nil, err
 	}
-	captureSSOScreenshot(page, cfg, logger, "01-grafana-sso-route")
 	deadline := time.Now().Add(cfg.LoginTimeout)
 	returned, err := waitForSSOPage(loginCtx, page, baseURL, "#i0116", deadline, false)
 	if err != nil {
@@ -485,7 +388,6 @@ func rodGrafanaSSOLogin(ctx context.Context, cfg GrafanaSSOConfig, logger *slog.
 		if err := waitGrafanaSSOStep(loginCtx, logger, "email_form"); err != nil {
 			return nil, err
 		}
-		captureSSOScreenshot(page, cfg, logger, "02-email-form")
 		if err := enterAndSubmit(page, "#i0116", cfg.Username, deadline, logger); err != nil {
 			return nil, fmt.Errorf("submit SSO username: %w", err)
 		}
@@ -493,7 +395,6 @@ func rodGrafanaSSOLogin(ctx context.Context, cfg GrafanaSSOConfig, logger *slog.
 		if err := waitGrafanaSSOStep(loginCtx, logger, "email_submitted"); err != nil {
 			return nil, err
 		}
-		captureSSOScreenshot(page, cfg, logger, "03-email-submitted")
 		returned, err = waitForSSOPage(loginCtx, page, baseURL, "#i0118", deadline, true)
 		if err != nil {
 			return nil, fmt.Errorf("wait for SSO password prompt: %w", err)
@@ -506,7 +407,6 @@ func rodGrafanaSSOLogin(ctx context.Context, cfg GrafanaSSOConfig, logger *slog.
 			if err := waitGrafanaSSOStep(loginCtx, logger, "password_form"); err != nil {
 				return nil, err
 			}
-			captureSSOScreenshot(page, cfg, logger, "03b-password-form")
 			if err := enterAndSubmit(page, "#i0118", cfg.Password, deadline, logger); err != nil {
 				return nil, fmt.Errorf("submit SSO password: %w", err)
 			}
@@ -514,13 +414,11 @@ func rodGrafanaSSOLogin(ctx context.Context, cfg GrafanaSSOConfig, logger *slog.
 			if err := waitGrafanaSSOStep(loginCtx, logger, "password_submitted"); err != nil {
 				return nil, err
 			}
-			captureSSOScreenshot(page, cfg, logger, "04-password-submitted")
-			if err := waitForGrafanaReturn(loginCtx, page, baseURL, deadline, logger, cfg); err != nil {
+			if err := waitForGrafanaReturn(loginCtx, page, baseURL, deadline, logger); err != nil {
 				return nil, fmt.Errorf("wait for Grafana redirect: %w", err)
 			}
 		}
 	}
-	captureSSOScreenshot(page, cfg, logger, "07-grafana-callback")
 	cookies, err := page.Cookies([]string{cfg.GrafanaURL})
 	if err != nil {
 		return nil, fmt.Errorf("read Grafana browser cookies: %w", err)
@@ -598,7 +496,7 @@ func visibleSSOElement(page *rod.Page, selector string) (*rod.Element, error) {
 	return nil, nil
 }
 
-func waitForGrafanaReturn(ctx context.Context, page *rod.Page, baseURL *url.URL, deadline time.Time, logger *slog.Logger, cfg GrafanaSSOConfig) error {
+func waitForGrafanaReturn(ctx context.Context, page *rod.Page, baseURL *url.URL, deadline time.Time, logger *slog.Logger) error {
 	ticker := time.NewTicker(250 * time.Millisecond)
 	defer ticker.Stop()
 	lastPage := "unavailable"
@@ -614,9 +512,6 @@ func waitForGrafanaReturn(ctx context.Context, page *rod.Page, baseURL *url.URL,
 			}
 		}
 		if err == nil && !staySignedInNoClicked {
-			if button := findStaySignedInNoButton(page); button != nil {
-				captureSSOScreenshot(page, cfg, logger, "05-stay-signed-in-prompt")
-			}
 			clicked, err := clickStaySignedInAndWaitForNavigation(page, deadline, logger)
 			if err != nil {
 				return err
@@ -627,7 +522,6 @@ func waitForGrafanaReturn(ctx context.Context, page *rod.Page, baseURL *url.URL,
 				if err := waitGrafanaSSOStep(ctx, logger, "stay_signed_in_no_clicked"); err != nil {
 					return err
 				}
-				captureSSOScreenshot(page, cfg, logger, "06-stay-signed-in-dismissed")
 			} else if !noControlWarningLogged {
 				logger.Info("No visible stay-signed-in choice yet")
 				logger.Info("SSO prompt selector state", "state", ssoPromptSelectorState(page))
@@ -636,7 +530,6 @@ func waitForGrafanaReturn(ctx context.Context, page *rod.Page, baseURL *url.URL,
 		}
 		if time.Until(deadline) <= 0 {
 			logger.Warn("Timed out waiting for Grafana SSO callback", "last_page", lastPage, "auth_stage", ssoAuthStage(page))
-			captureSSOScreenshot(page, cfg, logger, "08-callback-timeout")
 			return fmt.Errorf("Grafana redirect did not complete before timeout (last page %s, auth stage %s): %w", lastPage, ssoAuthStage(page), context.DeadlineExceeded)
 		}
 		select {

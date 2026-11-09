@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"sort"
 	"strings"
 	"testing"
@@ -27,19 +26,9 @@ func TestGrafanaSSODockerMCPReadTools(t *testing.T) {
 		t.Skipf("Docker image %q is unavailable; build it with Dockerfile.alpine first", image)
 	}
 
-	debugDir, err := os.MkdirTemp("", "mcp-grafana-sso-")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Logf("Redacted SSO logs and screenshots: %s", debugDir)
-
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
 	defer cancel()
-	command := exec.Command("docker", "run", "--rm", "-i", "--env-file", ".env",
-		"-e", "GRAFANA_SSO_LOG_FILE=/sso-debug/sso.log",
-		"-e", "GRAFANA_SSO_SCREENSHOT_DIR=/sso-debug/screenshots",
-		"--mount", fmt.Sprintf("type=bind,source=%s,target=/sso-debug", filepath.Clean(debugDir)),
-		image, "-t", "stdio")
+	command := exec.Command("docker", "run", "--rm", "-i", "--env-file", ".env", image, "-t", "stdio")
 	var serverLog bytes.Buffer
 	command.Stderr = &serverLog
 	client := mcp.NewClient(&mcp.Implementation{Name: "grafana-sso-read-test", Version: "1.0"}, nil)
@@ -49,19 +38,14 @@ func TestGrafanaSSODockerMCPReadTools(t *testing.T) {
 	}
 	defer session.Close()
 
-	loginLogPath := filepath.Join(debugDir, "sso.log")
-	if contents, err := os.ReadFile(loginLogPath); err == nil {
-		if strings.Contains(string(contents), "Starting Chromium for Grafana SSO") {
-			t.Fatal("Grafana SSO login started before the first MCP tool request")
-		}
-	} else if !os.IsNotExist(err) {
-		t.Fatalf("read SSO log before first tool request: %v", err)
+	if strings.Contains(serverLog.String(), "Starting Chromium for Grafana SSO") {
+		t.Fatal("Grafana SSO login started before the first MCP tool request")
 	}
 
 	firstRequestStarted := time.Now()
 	dashboardJSON := callMCPToolJSON(t, ctx, session, &serverLog, "search_dashboards", map[string]any{"limit": 5})
 	firstRequestDuration := time.Since(firstRequestStarted)
-	if got := countSSOLoginStarts(t, loginLogPath); got != 1 {
+	if got := countSSOLoginStarts(serverLog.String()); got != 1 {
 		t.Fatalf("SSO login count after first MCP request = %d, want 1", got)
 	}
 	reuseDurations := make([]time.Duration, 0, 3)
@@ -76,7 +60,7 @@ func TestGrafanaSSODockerMCPReadTools(t *testing.T) {
 	if medianReuseDuration >= firstRequestDuration {
 		t.Fatalf("reused-session median %s was not faster than first request %s", medianReuseDuration, firstRequestDuration)
 	}
-	if got := countSSOLoginStarts(t, loginLogPath); got != 1 {
+	if got := countSSOLoginStarts(serverLog.String()); got != 1 {
 		t.Fatalf("SSO login count after reused requests = %d, want 1", got)
 	}
 
@@ -133,13 +117,8 @@ func TestGrafanaSSODockerMCPReadTools(t *testing.T) {
 	t.Logf("Reports (%d): %s", len(reportNames), strings.Join(reportNames, "; "))
 }
 
-func countSSOLoginStarts(t *testing.T, logPath string) int {
-	t.Helper()
-	contents, err := os.ReadFile(logPath)
-	if err != nil {
-		t.Fatalf("read SSO log: %v", err)
-	}
-	return strings.Count(string(contents), "Starting Chromium for Grafana SSO")
+func countSSOLoginStarts(logText string) int {
+	return strings.Count(logText, "Starting Chromium for Grafana SSO")
 }
 
 func callMCPToolJSON(t *testing.T, ctx context.Context, session *mcp.ClientSession, serverLog *bytes.Buffer, name string, arguments map[string]any) []byte {
