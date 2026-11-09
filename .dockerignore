@@ -6,6 +6,8 @@
 # Docker
 Dockerfile
 .dockerignore
+.env
+.env.*
 
 # Build artifacts
 bin/

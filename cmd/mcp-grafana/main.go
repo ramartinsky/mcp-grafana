@@ -1684,6 +1684,15 @@ func main() {
 		}
 	}
 
+	ssoConfig, useSSO, err := mcpgrafana.GrafanaSSOConfigFromEnv()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "invalid Grafana authentication configuration: %v\n", err)
+		os.Exit(2)
+	}
+	if useSSO {
+		grafanaConfig.SSOSession = mcpgrafana.NewGrafanaSSOSession(ssoConfig, slog.Default())
+	}
+
 	enforcedMatchers, err := tools.ParseEnforcedMatchers(gc.lokiEnforcedMatchers)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "invalid --loki-enforced-matchers: %v\n", err)

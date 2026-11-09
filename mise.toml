@@ -100,10 +100,7 @@ run = "go run ./cmd/linters/openapi ./tools/... ./internal/datasource/... ./"
 
 [tasks.test-unit]
 description = "Run the unit tests (no external dependencies required)"
-run = [
-  "go test -v -tags unit ./...",
-  "cd lokiguard && go test -v ./...",
-]
+run = ["go test -v -tags unit ./...", "cd lokiguard && go test -v ./..."]
 
 [tasks.test]
 description = "Alias for test-unit"

@@ -28,7 +28,7 @@ LABEL io.modelcontextprotocol.server.name="io.github.grafana/mcp-grafana"
 
 # Install ca-certificates for HTTPS requests and upgrade existing packages
 # to pick up security fixes newer than the base image snapshot
-RUN apk upgrade --no-cache && apk add --no-cache ca-certificates
+RUN apk upgrade --no-cache && apk add --no-cache ca-certificates chromium
 
 # Create a non-root user
 RUN adduser -D -u 1000 mcp-grafana
@@ -41,6 +41,8 @@ COPY --from=builder --chown=1000:1000 /app/mcp-grafana /app/
 
 # Use the non-root user
 USER mcp-grafana
+
+ENV CHROME_BIN=/usr/bin/chromium
 
 # Expose the port the app runs on
 EXPOSE 8000

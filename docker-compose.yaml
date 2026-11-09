@@ -19,7 +19,7 @@ services:
       - type: tmpfs
         target: /var/lib/grafana/empty-alerts-folder
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:3000/api/health"]
+      test: [ "CMD", "curl", "-sf", "http://localhost:3000/api/health" ]
       interval: 5s
       timeout: 3s
       retries: 20
@@ -38,7 +38,7 @@ services:
     ports:
       - 3002:3000/tcp
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:3000/api/health"]
+      test: [ "CMD", "curl", "-sf", "http://localhost:3000/api/health" ]
       interval: 5s
       timeout: 3s
       retries: 20
@@ -61,7 +61,7 @@ services:
       - ./testdata/dashboards:/var/lib/grafana/dashboards
     healthcheck:
       # This image is Alpine-based and has no curl; busybox wget is what's available.
-      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:3000/api/health"]
+      test: [ "CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:3000/api/health" ]
       interval: 5s
       timeout: 3s
       retries: 20
@@ -76,7 +76,7 @@ services:
     # implies the repo is ready — a static GET / is enough, no need to spawn
     # the upload-pack CGI.
     healthcheck:
-      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost/"]
+      test: [ "CMD", "wget", "-q", "-O", "/dev/null", "http://localhost/" ]
       interval: 5s
       timeout: 3s
       retries: 10
@@ -90,7 +90,7 @@ services:
         condition: service_healthy
     volumes:
       - ./testdata/provisioning-repo-seed.sh:/seed.sh
-    entrypoint: ["sh", "/seed.sh"]
+    entrypoint: [ "sh", "/seed.sh" ]
 
   # Seeds a secondary org + dashboard on both Grafana instances for the
   # orgId-parameter integration tests (see tools/orgid_integration_test.go).
@@ -103,7 +103,7 @@ services:
         condition: service_healthy
     volumes:
       - ./testdata/orgs-seed.sh:/seed.sh
-    entrypoint: ["sh", "/seed.sh"]
+    entrypoint: [ "sh", "/seed.sh" ]
 
   renderer:
     image: grafana/grafana-image-renderer:latest@sha256:340c91e98ccd65001a3da4d0192fcf0ed13e95609a51a0d62c35a61b6ff28dff
@@ -147,13 +147,13 @@ services:
 
   tempo:
     image: grafana/tempo:2.10.0-rc.0@sha256:ab73a4fa3586e866be3322507491b66d49c9607592128b72b3aad80e3b355a12
-    command: ["-config.file=/etc/tempo/tempo-config.yaml"]
+    command: [ "-config.file=/etc/tempo/tempo-config.yaml" ]
     volumes:
       - ./testdata/tempo-config.yaml:/etc/tempo/tempo-config.yaml
     ports:
-      - "3200:3200"   # tempo HTTP API
-      - "4317:4317"   # OTLP gRPC receiver
-      - "4318:4318"   # OTLP HTTP receiver
+      - "3200:3200" # tempo HTTP API
+      - "4317:4317" # OTLP gRPC receiver
+      - "4318:4318" # OTLP HTTP receiver
 
   alertmanager:
     image: prom/alertmanager:v0.34.2@sha256:39d8bb3966c694a124428a3a88fbcffd40bd069129ecd47c059f8a3f17c55f3b
@@ -174,7 +174,7 @@ services:
     ports:
       - "9200:9200"
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:9200/_cluster/health | grep -q '\"status\":\"green\"\\|\"status\":\"yellow\"'"]
+      test: [ "CMD-SHELL", "curl -sf http://localhost:9200/_cluster/health | grep -q '\"status\":\"green\"\\|\"status\":\"yellow\"'" ]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -186,7 +186,7 @@ services:
         condition: service_healthy
     volumes:
       - ./testdata/elasticsearch-seed.sh:/seed.sh
-    entrypoint: ["sh", "/seed.sh"]
+    entrypoint: [ "sh", "/seed.sh" ]
 
   opensearch:
     image: opensearchproject/opensearch:3.9.0@sha256:3b55f6b6249cfdb92b52ee59adc8a266203ba9ef9f5d82544fad6f1af2f3609e
@@ -197,7 +197,7 @@ services:
     ports:
       - "9201:9200"
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:9200/_cluster/health | grep -q '\"status\":\"green\"\\|\"status\":\"yellow\"'"]
+      test: [ "CMD-SHELL", "curl -sf http://localhost:9200/_cluster/health | grep -q '\"status\":\"green\"\\|\"status\":\"yellow\"'" ]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -209,15 +209,15 @@ services:
         condition: service_healthy
     volumes:
       - ./testdata/opensearch-seed.sh:/seed.sh
-    entrypoint: ["sh", "/seed.sh"]
+    entrypoint: [ "sh", "/seed.sh" ]
 
   quickwit:
     image: quickwit/quickwit:v0.9.3@sha256:7c3f5061ea7c00921205c295833f152871d057ec1a9e4c9b1d36131dacc420bd
-    command: ["run"]
+    command: [ "run" ]
     ports:
       - "7280:7280"
     healthcheck:
-      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/localhost/7280 && echo -e \"GET /health/livez HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n\" >&3 && grep -q true <&3'"]
+      test: [ "CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/localhost/7280 && echo -e \"GET /health/livez HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n\" >&3 && grep -q true <&3'" ]
       interval: 10s
       timeout: 5s
       retries: 15
@@ -229,7 +229,7 @@ services:
         condition: service_healthy
     volumes:
       - ./testdata/quickwit-seed.sh:/seed.sh
-    entrypoint: ["sh", "/seed.sh"]
+    entrypoint: [ "sh", "/seed.sh" ]
 
   localstack:
     image: localstack/localstack:4.14@sha256:3ebc37595918b8accb852f8048fef2aff047d465167edd655528065b07bc364a
@@ -242,7 +242,7 @@ services:
     volumes:
       - ./testdata/localstack-init.sh:/etc/localstack/init/ready.d/init.sh
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:4566/_localstack/health"]
+      test: [ "CMD", "curl", "-f", "http://localhost:4566/_localstack/health" ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -259,7 +259,7 @@ services:
       DOCKER_INFLUXDB_INIT_BUCKET: metrics
       DOCKER_INFLUXDB_INIT_ADMIN_TOKEN: mcptests-admin-token
     healthcheck:
-      test: ["CMD", "influx", "ping"]
+      test: [ "CMD", "influx", "ping" ]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -271,7 +271,7 @@ services:
         condition: service_healthy
     volumes:
       - ./testdata/influxdb-seed.sh:/seed.sh
-    entrypoint: ["sh", "/seed.sh"]
+    entrypoint: [ "sh", "/seed.sh" ]
 
   clickhouse:
     image: clickhouse/clickhouse-server:25.12@sha256:8a790dd3468db22b1d4e7b18a176f378ff5ff6053b9c48dd4ea1fa71a24c5ba6
@@ -282,7 +282,7 @@ services:
       - ./testdata/clickhouse-init.sql:/docker-entrypoint-initdb.d/init.sql
       - ./testdata/clickhouse-users.xml:/etc/clickhouse-server/users.d/default-user.xml
     healthcheck:
-      test: ["CMD", "clickhouse-client", "--query", "SELECT 1"]
+      test: [ "CMD", "clickhouse-client", "--query", "SELECT 1" ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -297,7 +297,7 @@ services:
     volumes:
       - ./testdata/mysql-init.sql:/docker-entrypoint-initdb.d/init.sql
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      test: [ "CMD", "mysqladmin", "ping", "-h", "localhost" ]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -312,7 +312,7 @@ services:
     volumes:
       - ./testdata/postgres-init.sql:/docker-entrypoint-initdb.d/init.sql
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      test: [ "CMD-SHELL", "pg_isready -U postgres" ]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -324,7 +324,7 @@ services:
     environment:
       NEO4J_AUTH: neo4j/mcptests-password
     healthcheck:
-      test: ["CMD-SHELL", "cypher-shell -u neo4j -p mcptests-password 'RETURN 1'"]
+      test: [ "CMD-SHELL", "cypher-shell -u neo4j -p mcptests-password 'RETURN 1'" ]
       interval: 10s
       timeout: 10s
       retries: 20
@@ -332,7 +332,7 @@ services:
   graphite:
     image: graphiteapp/graphite-statsd:latest@sha256:2d61228771119ddaee2f62d65739d3b5e903de36666e899703e47be1def571fe
     healthcheck:
-      test: ["CMD-SHELL", "wget -q -O /dev/null 'http://127.0.0.1/metrics/find?query=*'"]
+      test: [ "CMD-SHELL", "wget -q -O /dev/null 'http://127.0.0.1/metrics/find?query=*'" ]
       interval: 10s
       timeout: 5s
       retries: 15
@@ -347,7 +347,7 @@ services:
     volumes:
       - graphite-whisper:/opt/graphite/storage/whisper
       - ./testdata/graphite-seed.sh:/seed.sh
-    entrypoint: ["sh", "/seed.sh"]
+    entrypoint: [ "sh", "/seed.sh" ]
 
 volumes:
   graphite-whisper:

@@ -72,6 +72,9 @@ func getEnv(key string) string {
 
 func urlAndAPIKeyFromEnv(logger *slog.Logger) (string, string) {
 	u := normalizeGrafanaURL(getEnv(grafanaURLEnvVar))
+	if grafanaSSOIsDefault() {
+		return u, ""
+	}
 
 	// Check for the new service account token environment variable first.
 	apiKey := getEnv(grafanaServiceAccountTokenEnvVar)
@@ -101,6 +104,9 @@ func urlAndAPIKeyFromEnv(logger *slog.Logger) (string, string) {
 }
 
 func userAndPassFromEnv() *url.Userinfo {
+	if grafanaSSOIsDefault() {
+		return nil
+	}
 	username := getEnv(grafanaUsernameEnvVar)
 	password, exists := lookupEnv(grafanaPasswordEnvVar)
 	if username == "" && password == "" {
@@ -428,6 +434,13 @@ type GrafanaConfig struct {
 	// Note: NewGrafanaClient still wraps this transport with ExtraHeaders,
 	// OrgID, UserAgent, and otelhttp layers.
 	BaseTransport http.RoundTripper
+
+	// CookieJar carries the process-wide Grafana browser session. Its cookies
+	// are updated from every Grafana response, including rotated session tokens.
+	CookieJar http.CookieJar
+
+	// SSOSession lazily authenticates and refreshes the process-wide browser session.
+	SSOSession *GrafanaSSOSession
 
 	// Logger is an optional structured logger. When set, functions that have
 	// access to the GrafanaConfig will use this logger instead of the global
@@ -1038,6 +1051,11 @@ func BuildTransport(cfg *GrafanaConfig, base http.RoundTripper, opts ...Transpor
 	if err != nil {
 		return nil, err
 	}
+	if cfg.SSOSession != nil && cfg.OverrideURL == "" {
+		transport = cfg.SSOSession.transport(transport)
+	} else if cfg.CookieJar != nil && cfg.OverrideURL == "" {
+		transport = &grafanaSessionCookieTransport{jar: cfg.CookieJar, underlying: transport}
+	}
 	if !cfg.AllowCrossOriginRedirects {
 		transport = &redirectGuardTransport{next: transport}
 	}
@@ -1193,6 +1211,8 @@ var ExtractGrafanaInfoFromHeaders httpContextFunc = func(ctx context.Context, re
 			config.TLSConfig = &tlsConfig
 		}
 		config.BaseTransport = nil
+		config.CookieJar = nil
+		config.SSOSession = nil
 		config.ExtraHeaders = forwardedHeadersFromRequest(req)
 	} else {
 		config.ExtraHeaders = mergeHeaders(extraHeadersFromEnv(logger), forwardedHeadersFromRequest(req))
@@ -1753,6 +1773,8 @@ func NewGrafanaClient(ctx context.Context, grafanaURL, apiKey string, auth *url.
 					oboConfig := GrafanaConfig{
 						AccessToken:               config.AccessToken,
 						IDToken:                   config.IDToken,
+						CookieJar:                 config.CookieJar,
+						SSOSession:                config.SSOSession,
 						OrgID:                     config.OrgID,
 						TLSConfig:                 config.TLSConfig,
 						ExtraHeaders:              config.ExtraHeaders,
@@ -1804,6 +1826,8 @@ func NewGrafanaClient(ctx context.Context, grafanaURL, apiKey string, auth *url.
 		BasicAuth:                 auth,
 		AccessToken:               config.AccessToken,
 		IDToken:                   config.IDToken,
+		CookieJar:                 config.CookieJar,
+		SSOSession:                config.SSOSession,
 		TLSConfig:                 config.TLSConfig,
 		ExtraHeaders:              config.ExtraHeaders,
 		OverrideURL:               config.OverrideURL,
