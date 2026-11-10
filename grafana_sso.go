@@ -207,6 +207,8 @@ type GrafanaSSOSession struct {
 
 	mu  sync.Mutex
 	jar http.CookieJar
+
+	warnStrippedAuthOnce sync.Once
 }
 
 // NewGrafanaSSOSession creates a session manager without starting Chromium.
@@ -287,6 +289,15 @@ func (t *grafanaSSOSessionTransport) RoundTrip(req *http.Request) (*http.Respons
 
 func (t *grafanaSSOSessionTransport) roundTripWithJar(req *http.Request, jar http.CookieJar, retry bool) (*http.Response, error) {
 	cloned := req.Clone(req.Context())
+	// Grafana prefers an Authorization header over the session cookie, so a
+	// token or basic-auth credential (e.g. a client-supplied
+	// X-Grafana-Service-Account-Token) would shadow the SSO session.
+	if cloned.Header.Get("Authorization") != "" {
+		cloned.Header.Del("Authorization")
+		t.session.warnStrippedAuthOnce.Do(func() {
+			t.session.logger.Warn("Ignoring Authorization credentials on Grafana requests because SSO auth is active; set GRAFANA_AUTH_MODE=token to use token or basic auth")
+		})
+	}
 	if retry && req.Body != nil {
 		body, err := req.GetBody()
 		if err != nil {

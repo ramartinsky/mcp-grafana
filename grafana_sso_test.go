@@ -229,6 +229,57 @@ func TestSSOAuthSuppressesConfiguredBearerToken(t *testing.T) {
 	}
 }
 
+func TestSSOAuthIgnoresClientSuppliedCredentials(t *testing.T) {
+	setSSOTestEnv(t)
+	var authHeaders []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if cookie, _ := r.Cookie("grafana_session"); cookie == nil {
+			t.Errorf("%s request missing SSO session cookie", r.URL.Path)
+		}
+		authHeaders = append(authHeaders, r.Header.Get("Authorization"))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":1,"login":"svc"}`))
+	}))
+	defer server.Close()
+	t.Setenv(grafanaURLEnvVar, server.URL)
+
+	cfg, useSSO, err := GrafanaSSOConfigFromEnv()
+	if err != nil || !useSSO {
+		t.Fatalf("GrafanaSSOConfigFromEnv() = %v, %v", useSSO, err)
+	}
+	session := &GrafanaSSOSession{
+		config: cfg,
+		logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		login: func(context.Context, GrafanaSSOConfig, *slog.Logger) ([]*http.Cookie, error) {
+			return []*http.Cookie{{Name: "grafana_session", Value: "sso", Path: "/"}}, nil
+		},
+	}
+	httpFn := ComposedHTTPContextFunc(GrafanaConfig{SSOSession: session}, NewClientCache(slog.Default()))
+
+	for name, setCredentials := range map[string]func(*http.Request){
+		"service account token header": func(r *http.Request) { r.Header.Set(grafanaServiceAccountTokenHeader, "stale-client-token") },
+		"api key header":               func(r *http.Request) { r.Header.Set(grafanaAPIKeyHeader, "stale-client-key") },
+		"basic auth":                   func(r *http.Request) { r.SetBasicAuth("user", "pass") },
+	} {
+		authHeaders = nil
+		req := httptest.NewRequest(http.MethodPost, "/mcp", nil)
+		setCredentials(req)
+		ctx := httpFn(context.Background(), req)
+
+		if _, err := GrafanaClientFromContext(ctx).SignedInUser.GetSignedInUser(); err != nil {
+			t.Fatalf("%s: GetSignedInUser() error = %v", name, err)
+		}
+		if len(authHeaders) == 0 {
+			t.Fatalf("%s: no request reached Grafana", name)
+		}
+		for _, header := range authHeaders {
+			if header != "" {
+				t.Fatalf("%s: SSO request carried Authorization %q", name, header)
+			}
+		}
+	}
+}
+
 func setSSOTestEnv(t *testing.T) {
 	t.Helper()
 	t.Setenv(grafanaAuthModeEnvVar, "")

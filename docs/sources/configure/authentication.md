@@ -29,6 +29,8 @@ You set the environment variables (or equivalent) so the server can authenticate
 
 Set `GRAFANA_URL`, `GRAFANA_SERVICE_ACCOUNT_USERNAME`, and `GRAFANA_SERVICE_ACCOUNT_PASSWORD`. The server creates a shared SSO session manager at startup and opens headless Chromium when the first Grafana API request arrives. It stores the returned Grafana session cookies and reuses them for later tool requests. `Set-Cookie` updates, including session rotation, are applied to the shared session. If Grafana rejects an expired session, the server logs in again once and retries the request when its body is replayable.
 
+In SSO mode, the server removes any `Authorization` header from requests to Grafana, so tokens or basic-auth credentials sent by MCP clients (for example `X-Grafana-Service-Account-Token`) or configured through extra headers cannot override the SSO session.
+
 The first Grafana API request triggers a GET to Grafana's `/login/azuread` route. The authorize URL, OAuth `state`, PKCE challenge, tenant ID, client ID, and redirect URI are generated or provided by Grafana; do not copy them into environment variables. Optional settings:
 
 - `GRAFANA_AUTH_MODE`: `sso` or `token`. Defaults to SSO when the SSO username/password are present, otherwise token mode. Set to `token` to override SSO when both credential types are available.
