@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -20,13 +21,16 @@ import (
 )
 
 const (
-	grafanaSSOStepWait         = 4 * time.Second
-	grafanaAuthModeEnvVar      = "GRAFANA_AUTH_MODE"
-	grafanaSSOLoginPathEnvVar  = "GRAFANA_LOGIN_PATH"
-	grafanaSSOHostsEnvVar      = "GRAFANA_SSO_HOSTS"
-	grafanaSSOTimeoutEnvVar    = "GRAFANA_SSO_TIMEOUT"
-	grafanaSSOChromeBinEnvVar  = "GRAFANA_SSO_CHROME_BIN"
-	grafanaSSODefaultLoginPath = "/login/azuread"
+	grafanaSSOStepWait = 4 * time.Second
+	// Bounds how long a finished IdP flow may take to yield a Grafana session,
+	// so a failed callback (e.g. /login?error=...) fails fast.
+	grafanaSSOSessionVerifyTimeout = 20 * time.Second
+	grafanaAuthModeEnvVar          = "GRAFANA_AUTH_MODE"
+	grafanaSSOLoginPathEnvVar      = "GRAFANA_LOGIN_PATH"
+	grafanaSSOHostsEnvVar          = "GRAFANA_SSO_HOSTS"
+	grafanaSSOTimeoutEnvVar        = "GRAFANA_SSO_TIMEOUT"
+	grafanaSSOChromeBinEnvVar      = "GRAFANA_SSO_CHROME_BIN"
+	grafanaSSODefaultLoginPath     = "/login/azuread"
 )
 
 type GrafanaSSOConfig struct {
@@ -194,7 +198,11 @@ func LoginGrafanaSSO(ctx context.Context, cfg GrafanaSSOConfig, logger *slog.Log
 	if len(jar.Cookies(baseURL)) == 0 {
 		return nil, errors.New("Grafana SSO completed without a session cookie")
 	}
-	logger.Info("Grafana SSO session cookies captured", "cookie_count", len(jar.Cookies(baseURL)))
+	var cookieNames []string
+	for _, cookie := range jar.Cookies(baseURL) {
+		cookieNames = append(cookieNames, cookie.Name)
+	}
+	logger.Info("Grafana SSO session cookies captured", "cookie_count", len(cookieNames), "cookie_names", strings.Join(cookieNames, ","))
 	return jar, nil
 }
 
@@ -430,6 +438,9 @@ func rodGrafanaSSOLogin(ctx context.Context, cfg GrafanaSSOConfig, logger *slog.
 			}
 		}
 	}
+	if err := waitForGrafanaSession(loginCtx, page, cfg.GrafanaURL, deadline, logger); err != nil {
+		return nil, err
+	}
 	cookies, err := page.Cookies([]string{cfg.GrafanaURL})
 	if err != nil {
 		return nil, fmt.Errorf("read Grafana browser cookies: %w", err)
@@ -450,6 +461,53 @@ func rodGrafanaSSOLogin(ctx context.Context, cfg GrafanaSSOConfig, logger *slog.
 		result = append(result, cookie)
 	}
 	return result, nil
+}
+
+// waitForGrafanaSession confirms that the browser holds an authenticated
+// Grafana session. Reaching the Grafana origin is not enough: the OAuth
+// callback and the login error page are on that origin too, and Grafana sets
+// oauth_* cookies before the session cookie exists.
+func waitForGrafanaSession(ctx context.Context, page *rod.Page, grafanaURL string, deadline time.Time, logger *slog.Logger) error {
+	userURL := strings.TrimRight(grafanaURL, "/") + "/api/user"
+	if d := time.Now().Add(grafanaSSOSessionVerifyTimeout); d.Before(deadline) {
+		deadline = d
+	}
+	ticker := time.NewTicker(250 * time.Millisecond)
+	defer ticker.Stop()
+	lastStatus := "unavailable"
+	for {
+		result, err := page.Eval(`async (url) => {
+			const response = await fetch(url, {credentials: "include", headers: {Accept: "application/json"}});
+			return response.status;
+		}`, userURL)
+		if err == nil && result != nil {
+			status := result.Value.Int()
+			lastStatus = strconv.Itoa(status)
+			if status == http.StatusOK {
+				logger.Info("Grafana SSO session verified")
+				return nil
+			}
+		}
+		if time.Until(deadline) <= 0 {
+			lastPage := "unavailable"
+			if info, err := page.Info(); err == nil {
+				lastPage = redactedPageLocation(info.URL)
+			}
+			var names []string
+			if cookies, err := page.Cookies([]string{grafanaURL}); err == nil {
+				for _, cookie := range cookies {
+					names = append(names, cookie.Name)
+				}
+			}
+			logger.Warn("Grafana did not accept the SSO browser session", "api_user_status", lastStatus, "last_page", lastPage, "cookie_names", strings.Join(names, ","))
+			return fmt.Errorf("Grafana did not accept the SSO session (GET /api/user status %s, last page %s, cookies [%s])", lastStatus, lastPage, strings.Join(names, ","))
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("verify Grafana SSO session: %w", ctx.Err())
+		case <-ticker.C:
+		}
+	}
 }
 
 func isGrafanaSSODiagnosticHost(rawURL string, cfg GrafanaSSOConfig) bool {
